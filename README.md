@@ -6,7 +6,7 @@ DNS challenge works as expected but API challenge may not working since 80/443 h
 # Install acme.sh
 curl https://get.acme.sh | sh
 
-# Download renew script
+# Download this script
 curl https://raw.githubusercontent.com/damnever/synology-acme/master/synology_acme_renew.py -o acme-renew.py
 
 # Example usage for DNS challenge(https://github.com/Neilpang/acme.sh/wiki/dnsapi):
