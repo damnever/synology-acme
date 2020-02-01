@@ -23,6 +23,7 @@ Functions of this script:
         - Replace all certificates under `ReverseProxy`
         - Replace all certificates under `smbftpd/ftpd`
         - All services with `"isPkg": true` are ignored
+            - except VPNCenter/OpenVPN: `/usr/syno/etc/packages/VPNCenter/openvpn/keys`
     4. Reload nginx
     5. Rollback if one of the above steps failed
     6. Clean up
@@ -40,6 +41,11 @@ from datetime import datetime
 
 ACMESH_PATH = "/usr/local/share/acme.sh/acme.sh"
 CERTS_ROOT_PATH = "/usr/syno/etc/certificate/"
+OPENVPN_KEYS_PATH = "/usr/syno/etc/packages/VPNCenter/openvpn/keys"
+CERT_FILE = "cert.pem"
+KEY_FILE = "privkey.pem"
+FULLCHAIN_FILE = "fullchain.pem"
+CA_FILE = "ca.crt"
 NOW = "{0:%Y-%m-%d_%H%M%S}".format(datetime.now())
 CERTS_BACKUP_PATH = pathlib.join(
     tempfile.gettempdir(), "acme-renew/certs-{}-backup".format(NOW)
@@ -94,10 +100,11 @@ def issue_certs(
         with_dns_provider = '--dns "{}"'.format(dns_provider)
     renew_cmd = r"""{acmesh_path} --issue \
     {with_dns_provider} -d "{domain}" \
-    --cert-file "{output_dir}/cert.pem" \
-    --key-file "{output_dir}/privkey.pem" \
-    --fullchain-file "{output_dir}/fullchain.pem" \
+    --cert-file "{output_dir}/{cert_file}" \
+    --key-file "{output_dir}/{key_file}" \
+    --fullchain-file "{output_dir}/{fullchain_file}" \
     --capath "{output_dir}/chain.pem" \
+    --ca-file "{output_dir}/{ca_file}" \
     --dnssleep 180 --force # --debug"""
     _mkdirs(certs_new_path)
     _exec_cmd(
@@ -105,14 +112,18 @@ def issue_certs(
             acmesh_path=acmesh_path,
             domain=domain,
             with_dns_provider=with_dns_provider,
-            output_dir=certs_new_path
+            output_dir=certs_new_path,
+            cert_file=CERT_FILE,
+            key_file=KEY_FILE,
+            fullchain_file=FULLCHAIN_FILE,
+            ca_file=CA_FILE,
         )
     )
     return certs_new_path
 
 
 def update_certs(new_certs_path, certs_root_path=CERTS_ROOT_PATH):
-    LOG("UPDATE_CERTS: {}/*.pem", new_certs_path)
+    LOG("UPDATE_CERTS: <non-packages>")
     new_certs = glob.glob(pathlib.join(new_certs_path, "*.pem"))
 
     certs_info_path = pathlib.join(certs_root_path, "_archive/INFO")
@@ -130,7 +141,7 @@ def update_certs(new_certs_path, certs_root_path=CERTS_ROOT_PATH):
             certs_root_path, service["subscriber"], service["service"]
         )
         if service["isPkg"]:
-            LOG1("ignore [{}]: {}", service["display_name"], target_path)
+            #  LOG1("ignore [{}]: {}", service["display_name"], target_path)
             continue
 
         LOG1("update [{}]: {}", service["display_name"], target_path)
@@ -145,10 +156,48 @@ def _update_certs(new_certs, target_path):
         shutil.copy(cert, target_path)
 
 
-def reload():
-    LOG("RELOAD: nginx")
-    reload_cmd = "/usr/syno/sbin/synoservicectl --reload nginx"
-    _exec_cmd(reload_cmd)
+def update_certs_for_openvpn(
+    new_certs_path,
+    openvpn_keys_path=OPENVPN_KEYS_PATH,
+):
+    if not pathlib.isdir(openvpn_keys_path):
+        return False
+    LOG("UPDATE_CERTS: VPNCenter")
+    old_certs = glob.glob(pathlib.join(openvpn_keys_path, "*"))
+    for cert in old_certs:
+        try:
+            os.remove(cert)
+        except OSError:
+            pass
+
+    LOG1("update [OpenVPN]: {}", openvpn_keys_path)
+    # FIXME: the mapping..
+    for src, dest in {
+        CERT_FILE: "server.crt",
+        KEY_FILE: "server.key",
+        FULLCHAIN_FILE: "ca_bundle.crt",
+        CA_FILE: "ca.crt",
+    }.items():
+        shutil.copy(
+            pathlib.join(new_certs_path, src),
+            pathlib.join(openvpn_keys_path, dest),
+        )
+    return True
+
+
+def reload(service):
+    LOG("RELOAD: {}", service)
+    control_service("reload", service)
+
+
+def restart(service):
+    LOG("RESTART: {}", service)
+    control_service("restart", service)
+
+
+def control_service(action, service):
+    cmd = "/usr/syno/sbin/synoservicectl --{} {}".format(action, service)
+    _exec_cmd(cmd)
 
 
 def cleanup(paths):
@@ -205,8 +254,12 @@ if __name__ == "__main__":
             domain, dns_provider, acmesh_path=acmesh_path
         )
         tmp_paths.append(certs_new_path)
+
         update_certs(certs_new_path)
-        reload()
+        reload("nginx")
+
+        if update_certs_for_openvpn(certs_new_path):
+            restart("pkgctl-VPNCenter")
     except Exception:
         update_certs(certs_backup_path)  # Rollback..
         raise

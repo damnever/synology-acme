@@ -89,13 +89,16 @@ _INFO_CONTENT = """{
 
 class Test(unittest.TestCase):
     def _touch_pems(self, directory, content="OLD"):
-        for name in ["cert.pem", "chain.pem", "fullchain.pem", "privkey.pem"]:
+        for name in [
+            "cert.pem", "chain.pem", "fullchain.pem", "privkey.pem", "ca.crt"
+        ]:
             with open(pathlib.join(directory, name), "w+") as f:
                 f.write(content)
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="synology-acme-renew-test")
-        archive_path = pathlib.join(self.tmpdir, "_archive")
+        self.certs_root_dir = pathlib.join(self.tmpdir, "certificate")
+        archive_path = pathlib.join(self.certs_root_dir, "_archive")
         synology_acme_renew._mkdirs(pathlib.join(archive_path, "TestXX"))
         self._touch_pems(pathlib.join(archive_path, "TestXX"))
         with open(pathlib.join(archive_path, "DEFAULT"), "w+") as f:
@@ -107,43 +110,66 @@ class Test(unittest.TestCase):
             if service["isPkg"]:
                 continue
             subpath = pathlib.join(
-                self.tmpdir, service["subscriber"], service["service"]
+                self.certs_root_dir, service["subscriber"], service["service"]
             )
             synology_acme_renew._mkdirs(subpath)
             self._touch_pems(subpath)
+
+        self.openvpn_keys_dir = pathlib.join(
+            self.tmpdir, "packages/VPNCenter/openvpn/keys"
+        )
+        synology_acme_renew._mkdirs(self.openvpn_keys_dir)
 
     def tearDown(self):
         if hasattr(self, 'tmpdir'):
             shutil.rmtree(self.tmpdir)
 
-    def _assert_pem(self, directory, content="OLD"):
-        for name in ["cert.pem", "chain.pem", "fullchain.pem", "privkey.pem"]:
+    _NORMAL_CERT_NAMES = [
+        "cert.pem", "privkey.pem", "chain.pem", "fullchain.pem"
+    ]
+    _OPENVPN_CERT_NAMES = [
+        "server.crt", "server.key", "ca_bundle.crt", "ca.crt"
+    ]
+
+    def _assert_certs(
+        self, directory, content="OLD", certs_names=_NORMAL_CERT_NAMES
+    ):
+        for name in certs_names:
             with open(pathlib.join(directory, name), "r") as f:
                 self.assertEqual(content, f.read())
 
     def test_backup(self):
-        backup_path = pathlib.join(self.tmpdir, "BACKUP")
-        synology_acme_renew.backup(backup_path, self.tmpdir)
-        self._assert_pem(backup_path)
+        backup_path = pathlib.join(self.certs_root_dir, "BACKUP")
+        synology_acme_renew.backup(backup_path, self.certs_root_dir)
+        self._assert_certs(backup_path)
 
     def test_update_certs(self):
-        new_path = pathlib.join(self.tmpdir, "NEW")
+        new_path = pathlib.join(self.certs_root_dir, "NEW")
         synology_acme_renew._mkdirs(new_path)
         self._touch_pems(new_path, content="NEW")
-        synology_acme_renew.update_certs(new_path, self.tmpdir)
-        self._assert_pem(pathlib.join(self.tmpdir, "_archive/TestXX"), "NEW")
+        synology_acme_renew.update_certs(new_path, self.certs_root_dir)
+        self._assert_certs(
+            pathlib.join(self.certs_root_dir, "_archive/TestXX"), "NEW"
+        )
         for service in self.info["TestXX"]["services"]:
             if service["isPkg"]:
                 continue
             subpath = pathlib.join(
-                self.tmpdir, service["subscriber"], service["service"]
+                self.certs_root_dir, service["subscriber"], service["service"]
             )
-            self._assert_pem(subpath, "NEW")
+            self._assert_certs(subpath, "NEW")
+
+        synology_acme_renew.update_certs_for_openvpn(
+            new_path, self.openvpn_keys_dir
+        )
+        self._assert_certs(
+            self.openvpn_keys_dir, "NEW", self._OPENVPN_CERT_NAMES
+        )
 
     def test_cleanup(self):
         directories = [
-            pathlib.join(self.tmpdir, "a"),
-            pathlib.join(self.tmpdir, "b")
+            pathlib.join(self.certs_root_dir, "a"),
+            pathlib.join(self.certs_root_dir, "b")
         ]
         for d in directories:
             synology_acme_renew._mkdirs(d)
@@ -153,7 +179,7 @@ class Test(unittest.TestCase):
             self.assertFalse(pathlib.exists(d))
 
     def test__exec_cmd(self):
-        tmp_file = pathlib.join(self.tmpdir, "EXEC")
+        tmp_file = pathlib.join(self.certs_root_dir, "EXEC")
         synology_acme_renew._exec_cmd("touch " + tmp_file)
         self.assertTrue(pathlib.isfile(tmp_file))
 
