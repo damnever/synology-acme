@@ -239,6 +239,7 @@ if __name__ == "__main__":
     domain = os.getenv("DOMAIN")
     acmesh_path = os.getenv("ACMESH_PATH", default=ACMESH_PATH)
     dns_provider = os.getenv("DNS_PROVIDER")
+    restart_vpn = bool(os.getenv("RESTART_VPNCENTER"))
     if not domain:
         sys.exit(
             "DOMAIN required!\n"
@@ -258,7 +259,7 @@ if __name__ == "__main__":
         update_certs(certs_new_path)
         reload("nginx")
 
-        if update_certs_for_openvpn(certs_new_path):
+        if update_certs_for_openvpn(certs_new_path) and restart_vpn:
             restart("pkgctl-VPNCenter")
     except Exception:
         update_certs(certs_backup_path)  # Rollback..
