@@ -196,8 +196,21 @@ def restart(service):
 
 
 def control_service(action, service):
-    cmd = "/usr/syno/sbin/synoservicectl --{} {}".format(action, service)
+    cmdpath = "/usr/syno/bin/synosystemctl"
+    if _maybe_parse_version() < 7:
+        cmdpath = "/usr/syno/sbin/synoservicectl"
+    cmd = "{} {} {}".format(cmdpath, action, service)
     _exec_cmd(cmd)
+
+
+def _maybe_parse_version():
+    with open("/etc.defaults/VERSION") as f:
+        for line in f:
+            parts = line.split("=")
+            if len(parts) == 2 and parts[0].strip() == "majorversion":
+                return int(parts[1].strip(' "\n'))
+    LOG("VERSION: assume the major version of DSM is 7")
+    return 7
 
 
 def cleanup(paths):
